@@ -1,0 +1,743 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>作曲ツール</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      text-align: center;
+      padding: 20px;
+      background-color: #f0f0f0;
+    }
+    .controls {
+      margin-bottom: 20px;
+    }
+    .sequencer {
+      display: grid;
+      gap: 2px;
+      margin: 20px auto;
+      max-width: 1200px;
+    }
+    .note {
+      width: 20px;
+      height: 30px;
+      border: 1px solid #ccc;
+      background-color: #fff;
+      cursor: pointer;
+      font-size: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+      box-sizing: border-box;
+    }
+    .note.active {
+      background-color: #4caf50;
+      color: white;
+    }
+    .note.rest {
+      background-color: #d3d3d3;
+      color: black;
+    }
+    .note.playing {
+      border: 2px solid #ff5722;
+      width: 20px;
+      height: 30px;
+    }
+    .note.connected {
+      background-color: #81c784;
+      border-left: none;
+      border-right: none;
+      cursor: default;
+      pointer-events: none;
+    }
+    .note.active.connected {
+      background-color: #81c784;
+    }
+    .note.step-boundary {
+      border-right: 1px solid #999; /* 1ステップ（2サブマス） */
+    }
+    .note.measure-boundary {
+      border-right: 2px solid #666; /* 4マス（8サブマス） */
+    }
+    .note.section-boundary {
+      border-right: 3px solid #000; /* 16マス（32サブマス） */
+    }
+    .row-label {
+      width: 80px;
+      text-align: right;
+      padding-right: 10px;
+      font-size: 14px;
+    }
+    button, select, input {
+      padding: 8px 16px;
+      margin: 5px;
+      font-size: 14px;
+      cursor: pointer;
+      background-color: #2196f3;
+      color: white;
+      border: none;
+      border-radius: 5px;
+    }
+    button:hover, select:hover {
+      background-color: #1976d2;
+    }
+    input[type="number"] {
+      width: 80px;
+      background-color: white;
+      color: black;
+    }
+    .context-menu {
+      position: absolute;
+      background-color: white;
+      border: 1px solid #ccc;
+      box-shadow: 2px 2px 5px rgba(0,0,0,0.2);
+      z-index: 1000;
+      padding: 5px;
+    }
+    .context-menu div {
+      padding: 8px;
+      cursor: pointer;
+    }
+    .context-menu div:hover {
+      background-color: #f0f0f0;
+    }
+    .context-menu input {
+      width: 60px;
+      margin: 5px;
+    }
+  </style>
+</head>
+<body>
+  <h1>改良版作曲ツール</h1>
+  <p>グリッドをクリックで音を配置（即時再生）、右クリックで長さや休符を設定。1マス＝0.5ステップ（8分音符）。メロディ行（C4～C5）は楽器選択で音色、ドラム行は固定音。</p>
+  <div class="controls">
+    <button onclick="playSequence()">再生</button>
+    <button onclick="stopSequence()">停止</button>
+    <button onclick="addMeasure()">小節追加</button>
+    <button onclick="removeMeasure()">小節削除</button>
+    <button onclick="saveSequence()">保存</button>
+    <button onclick="loadSequence()">読み込み</button>
+    <button onclick="exportWav()">WAVエクスポート</button>
+    <label>テンポ (BPM): <input type="number" id="tempo" value="120" min="30" max="300"></label>
+    <label>デフォルト長さ (0.5ステップ単位): <input type="number" id="defaultDuration" value="4" min="0.5" max="2000" step="0.5"></label>
+    <label>楽器: 
+      <select id="instrument">
+        <option value="sine">ピアノ (Sine)</option>
+        <option value="square">バイオリン (Square)</option>
+        <option value="sawtooth">ギター (Sawtooth)</option>
+        <option value="triangle">フルート (Triangle)</option>
+        <option value="trumpet">トランペット</option>
+        <option value="bass">ベース</option>
+        <option value="kick">バスドラム</option>
+        <option value="snare">スネア</option>
+        <option value="hihat">ハイハット</option>
+        <option value="cymbal">シンバル</option>
+        <option value="clap">クラップ</option>
+        <option value="tom">タム</option>
+        <option value="piccolo">ピッコロ</option>
+        <option value="sax">サックス</option>
+      </select>
+    </label>
+  </div>
+  <div class="sequencer" id="sequencer"></div>
+
+  <script>
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    const ctx = new AudioContext();
+    const melodyNotes = [
+      { name: "C4", freq: 261.63 },
+      { name: "C#4/D♭4", freq: 277.18 },
+      { name: "D4", freq: 293.66 },
+      { name: "D#4/E♭4", freq: 311.13 },
+      { name: "E4", freq: 329.63 },
+      { name: "F4", freq: 349.23 },
+      { name: "F#4/G♭4", freq: 369.99 },
+      { name: "G4", freq: 392.00 },
+      { name: "G#4/A♭4", freq: 415.30 },
+      { name: "A4", freq: 440.00 },
+      { name: "A#4/B♭4", freq: 466.16 },
+      { name: "B4", freq: 493.88 },
+      { name: "C5", freq: 523.25 }
+    ];
+    const drumNotes = [
+      { name: "Kick", type: "kick" },
+      { name: "Snare", type: "snare" },
+      { name: "HiHat", type: "hihat" },
+      { name: "Cymbal", type: "cymbal" }
+    ];
+    const notes = [...melodyNotes, ...drumNotes];
+    const instrumentTypes = {
+      sine: { name: "Piano", type: "melody", wave: "sine", envelope: { attack: 0.005, decay: 0.1, sustain: 0.3, release: 0.2 } },
+      square: { name: "Violin", type: "melody", wave: "square", envelope: { attack: 0.01, decay: 0.2, sustain: 0.5, release: 0.3 } },
+      sawtooth: { name: "Guitar", type: "melody", wave: "sawtooth", vibrato: { freq: 5, depth: 0.1 } },
+      triangle: { name: "Flute", type: "melody", wave: "triangle", filter: { type: "highpass", freq: 1000 }, vibrato: { freq: 4, depth: 0.05 } },
+      trumpet: { name: "Trumpet", type: "melody", wave: "square", filter: { type: "bandpass", freq: 1200 }, envelope: { attack: 0.01, decay: 0.1, sustain: 0.7, release: 0.2 } },
+      bass: { name: "Bass", type: "melody", wave: "sine", filter: { type: "lowpass", freq: 300 }, envelope: { attack: 0.01, decay: 0.1, sustain: 0.5, release: 0.3 } },
+      kick: { name: "Kick", type: "drum" },
+      snare: { name: "Snare", type: "drum" },
+      hihat: { name: "HiHat", type: "drum" },
+      cymbal: { name: "Cymbal", type: "drum" },
+      clap: { name: "Clap", type: "drum" },
+      tom: { name: "Tom", type: "drum" },
+      piccolo: { name: "Piccolo", type: "melody", wave: "triangle", filter: { type: "lowpass", freq: 2000 } },
+      sax: { name: "Sax", type: "melody", wave: "sawtooth", filter: { type: "lowpass", freq: 800 } }
+    };
+    let measures = 4; // 初期4小節（32サブマス）
+    const stepsPerMeasure = 8; // 1小節＝8サブマス（4ステップ）
+    let defaultDuration = 4; // デフォルト4サブマス（2ステップ＝2分音符）
+    let sequence = Array(notes.length).fill().map(() => 
+      Array(measures * stepsPerMeasure).fill().map(() => ({ active: false, duration: defaultDuration, connected: false, rest: false }))
+    );
+    let isPlaying = false;
+    let currentStep = 0;
+    let nextNoteTime = 0;
+
+    // デフォルト長さの更新
+    document.getElementById('defaultDuration').addEventListener('change', () => {
+      const value = parseFloat(document.getElementById('defaultDuration').value);
+      if (value >= 0.5 && value <= 2000) {
+        defaultDuration = value;
+        sequence = sequence.map(row => 
+          row.map(cell => ({ ...cell, duration: cell.active || cell.rest ? cell.duration : defaultDuration }))
+        );
+      }
+    });
+
+    // シーケンスの保存
+    function saveSequence() {
+      const data = { sequence, measures, defaultDuration };
+      localStorage.setItem('musicComposerSequence', JSON.stringify(data));
+      alert('シーケンスを保存しました！');
+    }
+
+    // シーケンスの読み込み
+    function loadSequence() {
+      const data = localStorage.getItem('musicComposerSequence');
+      if (data) {
+        const parsed = JSON.parse(data);
+        sequence = parsed.sequence;
+        measures = parsed.measures;
+        defaultDuration = parsed.defaultDuration || 4;
+        document.getElementById('defaultDuration').value = defaultDuration;
+        renderSequencer();
+        alert('シーケンスを読み込みました！');
+      } else {
+        alert('保存されたシーケンスがありません。');
+      }
+    }
+
+    // WAVエクスポート
+    async function exportWav() {
+      const tempo = parseInt(document.getElementById('tempo').value) || 120;
+      const stepDuration = 60 / tempo / 8; // 0.5ステップ＝8分音符
+      const totalDuration = measures * stepsPerMeasure * stepDuration;
+      const offlineCtx = new OfflineAudioContext(2, Math.ceil(totalDuration * ctx.sampleRate), ctx.sampleRate);
+
+      for (let row = 0; row < notes.length; row++) {
+        for (let col = 0; col < measures * stepsPerMeasure; col++) {
+          if (sequence[row][col].active && !sequence[row][col].rest) {
+            const startTime = col * stepDuration;
+            const duration = stepDuration * sequence[row][col].duration;
+            const instrument = document.getElementById('instrument').value;
+            await renderNote(notes[row], startTime, duration, instrument, offlineCtx);
+          }
+        }
+      }
+
+      const renderedBuffer = await offlineCtx.startRendering();
+      const wav = audioBufferToWav(renderedBuffer);
+      const blob = new Blob([wav], { type: 'audio/wav' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'sequence.wav';
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    // AudioBufferをWAVに変換
+    function audioBufferToWav(buffer) {
+      const numChannels = buffer.numberOfChannels;
+      const sampleRate = buffer.sampleRate;
+      const length = buffer.length * numChannels * 2 + 44;
+      const arrayBuffer = new ArrayBuffer(length);
+      const view = new DataView(arrayBuffer);
+
+      writeString(view, 0, 'RIFF');
+      view.setUint32(4, 36 + buffer.length * numChannels * 2, true);
+      writeString(view, 8, 'WAVE');
+      writeString(view, 12, 'fmt ');
+      view.setUint32(16, 16, true);
+      view.setUint16(20, 1, true);
+      view.setUint16(22, numChannels, true);
+      view.setUint32(24, sampleRate, true);
+      view.setUint32(28, sampleRate * numChannels * 2, true);
+      view.setUint16(32, numChannels * 2, true);
+      view.setUint16(34, 16, true);
+      writeString(view, 36, 'data');
+      view.setUint32(40, buffer.length * numChannels * 2, true);
+
+      for (let i = 0; i < buffer.length; i++) {
+        for (let channel = 0; channel < numChannels; channel++) {
+          const sample = buffer.getChannelData(channel)[i];
+          const value = Math.max(-1, Math.min(1, sample)) * 32767;
+          view.setInt16(44 + (i * numChannels + channel) * 2, value, true);
+        }
+      }
+      return arrayBuffer;
+    }
+
+    function writeString(view, offset, string) {
+      for (let i = 0; i < string.length; i++) {
+        view.setUint8(offset + i, string.charCodeAt(i));
+      }
+    }
+
+    // シーケンサーグリッドの生成
+    function renderSequencer() {
+      const sequencer = document.getElementById('sequencer');
+      sequencer.innerHTML = '';
+      sequencer.style.gridTemplateColumns = `80px repeat(${measures * stepsPerMeasure}, 20px)`;
+      
+      for (let i = 0; i < notes.length; i++) {
+        const label = document.createElement('div');
+        label.classList.add('row-label');
+        label.textContent = notes[i].name;
+        sequencer.appendChild(label);
+
+        for (let j = 0; j < measures * stepsPerMeasure; j++) {
+          const note = document.createElement('div');
+          note.classList.add('note');
+          note.dataset.row = i;
+          note.dataset.col = j;
+          note.textContent = sequence[i][j].active ? (sequence[i][j].rest ? 'R' : sequence[i][j].duration) : '';
+          note.onclick = () => toggleNote(i, j, note);
+          note.oncontextmenu = (e) => showContextMenu(e, i, j, note);
+          if (sequence[i][j].active) note.classList.add('active');
+          if (sequence[i][j].rest) note.classList.add('rest');
+          if (sequence[i][j].connected) note.classList.add('connected');
+          if (j % 2 === 1) note.classList.add('step-boundary');
+          if (j % 8 === 7) note.classList.add('measure-boundary');
+          if (j % 32 === 31) note.classList.add('section-boundary');
+          sequencer.appendChild(note);
+        }
+      }
+    }
+
+    // 音の切り替え
+    function toggleNote(row, col, element) {
+      if (sequence[row][col].connected) return;
+      
+      sequence[row][col].active = !sequence[row][col].active;
+      if (sequence[row][col].active) {
+        sequence[row][col].rest = false;
+        sequence[row][col].duration = defaultDuration;
+        const duration = sequence[row][col].duration;
+        for (let i = 1; i < Math.ceil(duration) && col + i < measures * stepsPerMeasure; i++) {
+          sequence[row][col + i] = { active: false, duration: defaultDuration, connected: true, rest: false };
+        }
+      } else {
+        for (let i = 1; i < measures * stepsPerMeasure - col; i++) {
+          if (sequence[row][col + i].connected) {
+            sequence[row][col + i] = { active: false, duration: defaultDuration, connected: false, rest: false };
+          } else {
+            break;
+          }
+        }
+      }
+      renderSequencer();
+      
+      if (sequence[row][col].active && !sequence[row][col].rest) {
+        const instrument = document.getElementById('instrument').value;
+        const tempo = parseInt(document.getElementById('tempo').value) || 120;
+        const stepDuration = 60 / tempo / 8;
+        playNote(notes[row], ctx.currentTime, stepDuration * sequence[row][col].duration, instrument, ctx);
+      }
+    }
+
+    // コンテキストメニュー表示
+    function showContextMenu(e, row, col, element) {
+      e.preventDefault();
+      if (sequence[row][col].connected) return;
+
+      const existingMenu = document.querySelector('.context-menu');
+      if (existingMenu) existingMenu.remove();
+
+      const menu = document.createElement('div');
+      menu.classList.add('context-menu');
+      menu.style.left = `${e.pageX}px`;
+      menu.style.top = `${e.pageY}px`;
+      const durations = [0.5, 1, 2, 4, 8, 16, 32, 64];
+      durations.forEach(dur => {
+        const item = document.createElement('div');
+        item.textContent = `${dur} サブマス (${dur/2}拍)`;
+        item.onclick = () => {
+          updateDuration(row, col, dur, false);
+          renderSequencer();
+          menu.remove();
+        };
+        menu.appendChild(item);
+      });
+      const restItem = document.createElement('div');
+      restItem.textContent = '休符 (1 サブマス = 0.5拍)';
+      restItem.onclick = () => {
+        updateDuration(row, col, 1, true);
+        renderSequencer();
+        menu.remove();
+      };
+      menu.appendChild(restItem);
+      const customItem = document.createElement('div');
+      customItem.innerHTML = 'カスタム: <input type="number" min="0.5" max="2000" step="0.5" value="4">';
+      menu.appendChild(customItem);
+      const input = customItem.querySelector('input');
+      input.onchange = () => {
+        const dur = parseFloat(input.value);
+        if (dur >= 0.5 && dur <= 2000) {
+          updateDuration(row, col, dur, false);
+          renderSequencer();
+        }
+        menu.remove();
+      };
+      document.body.appendChild(menu);
+      document.addEventListener('click', () => menu.remove(), { once: true });
+    }
+
+    // 音の長さ更新
+    function updateDuration(row, col, duration, isRest) {
+      if (notes[row].type || instrumentTypes[document.getElementById('instrument').value].type === "drum") {
+        duration = Math.min(duration, 8); // ドラムは最大4ステップ（8サブマス）
+      }
+      for (let i = 1; i < measures * stepsPerMeasure - col; i++) {
+        if (sequence[row][col + i].connected) {
+          sequence[row][col + i] = { active: false, duration: defaultDuration, connected: false, rest: false };
+        } else {
+          break;
+        }
+      }
+      sequence[row][col].duration = duration;
+      sequence[row][col].active = true;
+      sequence[row][col].rest = isRest;
+      if (!isRest && duration > 1) {
+        for (let i = 1; i < Math.ceil(duration) && col + i < measures * stepsPerMeasure; i++) {
+          sequence[row][col + i] = { active: false, duration: defaultDuration, connected: true, rest: false };
+        }
+      }
+    }
+
+    // ホワイトノイズ生成（ドラム用）
+    function createNoiseBuffer(ctx) {
+      const bufferSize = ctx.sampleRate * 0.2;
+      const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < bufferSize; i++) {
+        data[i] = Math.random() * 2 - 1;
+      }
+      return buffer;
+    }
+
+    // ドラム音の生成
+    function playDrum(type, startTime, duration, ctx) {
+      duration = Math.min(duration, 0.3);
+      if (type === "kick") {
+        const oscillator = ctx.createOscillator();
+        const gainNode = ctx.createGain();
+        oscillator.type = "sine";
+        oscillator.frequency.setValueAtTime(150, startTime);
+        oscillator.frequency.exponentialRampToValueAtTime(0.001, startTime + 0.1);
+        gainNode.gain.setValueAtTime(1, startTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.00001, startTime + 0.1);
+        oscillator.connect(gainNode);
+        gainNode.connect(ctx.destination);
+        oscillator.start(startTime);
+        oscillator.stop(startTime + duration);
+        oscillator.onended = () => {
+          gainNode.disconnect();
+          oscillator.disconnect();
+        };
+      } else if (type === "snare") {
+        const noise = ctx.createBufferSource();
+        noise.buffer = createNoiseBuffer(ctx);
+        const noiseGain = ctx.createGain();
+        noiseGain.gain.setValueAtTime(0.5, startTime);
+        noiseGain.gain.exponentialRampToValueAtTime(0.00001, startTime + 0.1);
+        const oscillator = ctx.createOscillator();
+        oscillator.type = "triangle";
+        oscillator.frequency.setValueAtTime(200, startTime);
+        const oscGain = ctx.createGain();
+        oscGain.gain.setValueAtTime(0.3, startTime);
+        oscGain.gain.exponentialRampToValueAtTime(0.00001, startTime + 0.1);
+        noise.connect(noiseGain);
+        oscillator.connect(oscGain);
+        noiseGain.connect(ctx.destination);
+        oscGain.connect(ctx.destination);
+        noise.start(startTime);
+        oscillator.start(startTime);
+        noise.stop(startTime + duration);
+        oscillator.stop(startTime + duration);
+        noise.onended = () => {
+          noiseGain.disconnect();
+          oscillator.disconnect();
+          oscGain.disconnect();
+        };
+      } else if (type === "hihat") {
+        const noise = ctx.createBufferSource();
+        noise.buffer = createNoiseBuffer(ctx);
+        const gainNode = ctx.createGain();
+        gainNode.gain.setValueAtTime(0.3, startTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.00001, startTime + 0.05);
+        noise.connect(gainNode);
+        gainNode.connect(ctx.destination);
+        noise.start(startTime);
+        noise.stop(startTime + 0.05);
+        noise.onended = () => {
+          gainNode.disconnect();
+        };
+      } else if (type === "cymbal") {
+        const noise = ctx.createBufferSource();
+        noise.buffer = createNoiseBuffer(ctx);
+        const gainNode = ctx.createGain();
+        gainNode.gain.setValueAtTime(0.5, startTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.00001, startTime + 0.3);
+        const filter = ctx.createBiquadFilter();
+        filter.type = "highpass";
+        filter.frequency.setValueAtTime(1000, startTime);
+        noise.connect(filter);
+        filter.connect(gainNode);
+        gainNode.connect(ctx.destination);
+        noise.start(startTime);
+        noise.stop(startTime + 0.3);
+        noise.onended = () => {
+          gainNode.disconnect();
+          filter.disconnect();
+        };
+      } else if (type === "clap") {
+        const noise = ctx.createBufferSource();
+        noise.buffer = createNoiseBuffer(ctx);
+        const gainNode = ctx.createGain();
+        gainNode.gain.setValueAtTime(0.6, startTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.00001, startTime + 0.1);
+        const filter = ctx.createBiquadFilter();
+        filter.type = "bandpass";
+        filter.frequency.setValueAtTime(1000, startTime);
+        noise.connect(filter);
+        filter.connect(gainNode);
+        gainNode.connect(ctx.destination);
+        noise.start(startTime);
+        noise.stop(startTime + 0.1);
+        noise.onended = () => {
+          gainNode.disconnect();
+          filter.disconnect();
+        };
+      } else if (type === "tom") {
+        const oscillator = ctx.createOscillator();
+        const gainNode = ctx.createGain();
+        oscillator.type = "sine";
+        oscillator.frequency.setValueAtTime(100, startTime);
+        oscillator.frequency.exponentialRampToValueAtTime(0.001, startTime + 0.2);
+        gainNode.gain.setValueAtTime(0.8, startTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.00001, startTime + 0.2);
+        oscillator.connect(gainNode);
+        gainNode.connect(ctx.destination);
+        oscillator.start(startTime);
+        oscillator.stop(startTime + 0.2);
+        oscillator.onended = () => {
+          gainNode.disconnect();
+          oscillator.disconnect();
+        };
+      }
+    }
+
+    // メロディ/管楽器の生成
+    function playNote(note, startTime, duration, type, ctx) {
+      const instrument = instrumentTypes[type];
+      if (note.type || instrument.type === "drum") {
+        playDrum(note.type || type, startTime, duration, ctx);
+      } else {
+        const oscillator = ctx.createOscillator();
+        const gainNode = ctx.createGain();
+        oscillator.type = instrument.wave || "sine";
+        oscillator.frequency.setValueAtTime(note.freq, startTime);
+        
+        // ビブラート
+        if (instrument.vibrato) {
+          const vibrato = ctx.createOscillator();
+          const vibratoGain = ctx.createGain();
+          vibrato.frequency.setValueAtTime(instrument.vibrato.freq, startTime);
+          vibratoGain.gain.setValueAtTime(note.freq * instrument.vibrato.depth, startTime);
+          vibrato.connect(vibratoGain);
+          vibratoGain.connect(oscillator.frequency);
+          vibrato.start(startTime);
+          vibrato.stop(startTime + duration + 0.05);
+        }
+
+        // フィルター
+        let filter;
+        if (instrument.filter) {
+          filter = ctx.createBiquadFilter();
+          filter.type = instrument.filter.type;
+          filter.frequency.setValueAtTime(instrument.filter.freq, startTime);
+          oscillator.connect(filter);
+          filter.connect(gainNode);
+        } else {
+          oscillator.connect(gainNode);
+        }
+
+        // エンベロープ
+        if (instrument.envelope) {
+          const { attack, decay, sustain, release } = instrument.envelope;
+          gainNode.gain.setValueAtTime(0, startTime);
+          gainNode.gain.linearRampToValueAtTime(1, startTime + attack);
+          gainNode.gain.exponentialRampToValueAtTime(sustain, startTime + attack + decay);
+          gainNode.gain.setValueAtTime(sustain, startTime + duration - release);
+          gainNode.gain.exponentialRampToValueAtTime(0.00001, startTime + duration);
+        } else {
+          gainNode.gain.setValueAtTime(0, startTime);
+          gainNode.gain.linearRampToValueAtTime(0.5, startTime + 0.005);
+          gainNode.gain.setValueAtTime(0.5, startTime + duration - 0.05);
+          gainNode.gain.exponentialRampToValueAtTime(0.00001, startTime + duration);
+        }
+
+        gainNode.connect(ctx.destination);
+        oscillator.start(startTime);
+        oscillator.stop(startTime + duration + 0.05);
+        oscillator.onended = () => {
+          gainNode.disconnect();
+          oscillator.disconnect();
+          if (filter) filter.disconnect();
+          if (instrument.vibrato) vibrato.disconnect();
+        };
+      }
+    }
+
+    // オフライン用レンダリング
+    async function renderNote(note, startTime, duration, type, ctx) {
+      const instrument = instrumentTypes[type];
+      if (note.type || instrument.type === "drum") {
+        playDrum(note.type || type, startTime, duration, ctx);
+      } else {
+        const oscillator = ctx.createOscillator();
+        const gainNode = ctx.createGain();
+        oscillator.type = instrument.wave || "sine";
+        oscillator.frequency.setValueAtTime(note.freq, startTime);
+
+        if (instrument.vibrato) {
+          const vibrato = ctx.createOscillator();
+          const vibratoGain = ctx.createGain();
+          vibrato.frequency.setValueAtTime(instrument.vibrato.freq, startTime);
+          vibratoGain.gain.setValueAtTime(note.freq * instrument.vibrato.depth, startTime);
+          vibrato.connect(vibratoGain);
+          vibratoGain.connect(oscillator.frequency);
+          vibrato.start(startTime);
+          vibrato.stop(startTime + duration + 0.05);
+        }
+
+        let filter;
+        if (instrument.filter) {
+          filter = ctx.createBiquadFilter();
+          filter.type = instrument.filter.type;
+          filter.frequency.setValueAtTime(instrument.filter.freq, startTime);
+          oscillator.connect(filter);
+          filter.connect(gainNode);
+        } else {
+          oscillator.connect(gainNode);
+        }
+
+        if (instrument.envelope) {
+          const { attack, decay, sustain, release } = instrument.envelope;
+          gainNode.gain.setValueAtTime(0, startTime);
+          gainNode.gain.linearRampToValueAtTime(1, startTime + attack);
+          gainNode.gain.exponentialRampToValueAtTime(sustain, startTime + attack + decay);
+          gainNode.gain.setValueAtTime(sustain, startTime + duration - release);
+          gainNode.gain.exponentialRampToValueAtTime(0.00001, startTime + duration);
+        } else {
+          gainNode.gain.setValueAtTime(0, startTime);
+          gainNode.gain.linearRampToValueAtTime(0.5, startTime + 0.005);
+          gainNode.gain.setValueAtTime(0.5, startTime + duration - 0.05);
+          gainNode.gain.exponentialRampToValueAtTime(0.00001, startTime + duration);
+        }
+
+        gainNode.connect(ctx.destination);
+        oscillator.start(startTime);
+        oscillator.stop(startTime + duration + 0.05);
+      }
+    }
+
+    // ハイライトの更新
+    function updateHighlight(step) {
+      document.querySelectorAll('.note').forEach(note => note.classList.remove('playing'));
+      if (step >= 0) {
+        for (let row = 0; row < notes.length; row++) {
+          const note = document.querySelector(`.note[data-row="${row}"][data-col="${step}"]`);
+          if (note) note.classList.add('playing');
+        }
+      }
+    }
+
+    // 次のステップをスケジュール
+    function scheduleNotes() {
+      const tempo = parseInt(document.getElementById('tempo').value) || 120;
+      const stepDuration = 60 / tempo / 8; // 0.5ステップ＝8分音符
+      const instrument = document.getElementById('instrument').value;
+
+      while (nextNoteTime < ctx.currentTime + 0.15 && isPlaying) {
+        const startTime = nextNoteTime;
+        for (let row = 0; row < notes.length; row++) {
+          if (sequence[row][currentStep].active && !sequence[row][currentStep].rest) {
+            const duration = stepDuration * sequence[row][currentStep].duration;
+            playNote(notes[row], startTime, duration, instrument, ctx);
+          }
+        }
+        updateHighlight(currentStep);
+        nextNoteTime += stepDuration;
+        currentStep++;
+        if (currentStep >= measures * stepsPerMeasure) currentStep = 0;
+      }
+    }
+
+    // シーケンスの再生
+    function playSequence() {
+      if (isPlaying) return;
+      isPlaying = true;
+      currentStep = 0;
+      nextNoteTime = ctx.currentTime + 0.05;
+
+      function scheduler() {
+        if (!isPlaying) {
+          updateHighlight(-1);
+          return;
+        }
+        scheduleNotes();
+        requestAnimationFrame(scheduler);
+      }
+      requestAnimationFrame(scheduler);
+    }
+
+    // シーケンスの停止
+    function stopSequence() {
+      isPlaying = false;
+      updateHighlight(-1);
+    }
+
+    // 小節の追加（32サブマス＝4小節）
+    function addMeasure() {
+      measures += 4;
+      sequence = sequence.map(row => [...row, ...Array(4 * stepsPerMeasure).fill().map(() => ({ active: false, duration: defaultDuration, connected: false, rest: false }))]);
+      renderSequencer();
+    }
+
+    // 小節の削除（32サブマス＝4小節）
+    function removeMeasure() {
+      if (measures <= 4) return;
+      measures -= 4;
+      sequence = sequence.map(row => row.slice(0, measures * stepsPerMeasure));
+      renderSequencer();
+    }
+
+    // 初期レンダリング
+    renderSequencer();
+  </script>
+</body>
+</html>
