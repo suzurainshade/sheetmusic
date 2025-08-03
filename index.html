@@ -111,8 +111,8 @@
   </style>
 </head>
 <body>
-  <h1>改良版作曲ツール</h1>
-  <p>グリッドをクリックで音を配置（即時再生）、右クリックで長さや休符を設定。1マス＝0.5ステップ（8分音符）。メロディ行（C4～C5）は楽器選択で音色、ドラム行は固定音。</p>
+  <h1>作曲ツール</h1>
+  <p>グリッドをクリックで音を配置、右クリックで長さや休符を設定。1マス＝16分音符。</p>
   <div class="controls">
     <button onclick="playSequence()">再生</button>
     <button onclick="stopSequence()">停止</button>
@@ -122,13 +122,13 @@
     <button onclick="loadSequence()">読み込み</button>
     <button onclick="exportWav()">WAVエクスポート</button>
     <label>テンポ (BPM): <input type="number" id="tempo" value="120" min="30" max="300"></label>
-    <label>デフォルト長さ (0.5ステップ単位): <input type="number" id="defaultDuration" value="4" min="0.5" max="2000" step="0.5"></label>
+    <label>デフォルト長さ: <input type="number" id="defaultDuration" value="4" min="0.5" max="2000" step="0.5"></label>
     <label>楽器: 
       <select id="instrument">
-        <option value="sine">ピアノ (Sine)</option>
-        <option value="square">バイオリン (Square)</option>
-        <option value="sawtooth">ギター (Sawtooth)</option>
-        <option value="triangle">フルート (Triangle)</option>
+        <option value="sine">Sine</option>
+        <option value="square">Square</option>
+        <option value="sawtooth">Sawtooth</option>
+        <option value="triangle">Triangle</option>
         <option value="trumpet">トランペット</option>
         <option value="bass">ベース</option>
         <option value="kick">バスドラム</option>
