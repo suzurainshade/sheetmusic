@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>作曲ツールv2</title>
+  <title>作曲ツールv3（ドラム自動コピー＆オクターブ拡張）</title>
   <style>
     body {
       font-family: Arial, sans-serif;
@@ -81,7 +81,7 @@
       border: none;
       border-radius: 5px;
     }
-    button:hover, select:hover {
+    button:hover, select:hover, input[type="checkbox"] + label:hover {
       background-color: #1976d2;
     }
     input[type="number"] {
@@ -89,24 +89,8 @@
       background-color: white;
       color: black;
     }
-    .context-menu {
-      position: absolute;
-      background-color: white;
-      border: 1px solid #ccc;
-      box-shadow: 2px 2px 5px rgba(0,0,0,0.2);
-      z-index: 1000;
-      padding: 5px;
-    }
-    .context-menu div {
-      padding: 8px;
-      cursor: pointer;
-    }
-    .context-menu div:hover {
-      background-color: #f0f0f0;
-    }
-    .context-menu input {
-      width: 60px;
-      margin: 5px;
+    input[type="checkbox"] {
+      vertical-align: middle;
     }
     .modal {
       display: none;
@@ -135,8 +119,8 @@
   </style>
 </head>
 <body>
-  <h1>作曲ツールv2</h1>
-  <p>グリッドをクリックで音を配置、右クリックで長さや休符を設定。1マス=16分音符。セーブコードで共有可能。</p>
+  <h1>作曲ツールv3</h1>
+  <p>グリッドをクリックで音を配置、右クリックで長さや休符を設定。1マス=32分音符）。セーブコードで共有、ドラム自動コピー（新小節）可。</p>
   <div class="controls">
     <button onclick="playSequence()">再生</button>
     <button onclick="stopSequence()">停止</button>
@@ -167,6 +151,7 @@
         <option value="sax">サックス</option>
       </select>
     </label>
+    <label><input type="checkbox" id="autoCopyDrums" checked> ドラム自動コピー（新小節）</label>
   </div>
   <div class="sequencer" id="sequencer"></div>
   <div class="modal" id="saveCodeModal">
@@ -190,6 +175,18 @@
     const AudioContext = window.AudioContext || window.webkitAudioContext;
     const ctx = new AudioContext();
     const melodyNotes = [
+      { name: "C3", freq: 130.81 },
+      { name: "C#3/D♭3", freq: 138.59 },
+      { name: "D3", freq: 146.83 },
+      { name: "D#3/E♭3", freq: 155.56 },
+      { name: "E3", freq: 164.81 },
+      { name: "F3", freq: 174.61 },
+      { name: "F#3/G♭3", freq: 185.00 },
+      { name: "G3", freq: 196.00 },
+      { name: "G#3/A♭3", freq: 207.65 },
+      { name: "A3", freq: 220.00 },
+      { name: "A#3/B♭3", freq: 233.08 },
+      { name: "B3", freq: 246.94 },
       { name: "C4", freq: 261.63 },
       { name: "C#4/D♭4", freq: 277.18 },
       { name: "D4", freq: 293.66 },
@@ -202,7 +199,19 @@
       { name: "A4", freq: 440.00 },
       { name: "A#4/B♭4", freq: 466.16 },
       { name: "B4", freq: 493.88 },
-      { name: "C5", freq: 523.25 }
+      { name: "C5", freq: 523.25 },
+      { name: "C#5/D♭5", freq: 554.37 },
+      { name: "D5", freq: 587.33 },
+      { name: "D#5/E♭5", freq: 622.25 },
+      { name: "E5", freq: 659.25 },
+      { name: "F5", freq: 698.46 },
+      { name: "F#5/G♭5", freq: 739.99 },
+      { name: "G5", freq: 783.99 },
+      { name: "G#5/A♭5", freq: 830.61 },
+      { name: "A5", freq: 880.00 },
+      { name: "A#5/B♭5", freq: 932.33 },
+      { name: "B5", freq: 987.77 },
+      { name: "C6", freq: 1046.50 }
     ];
     const drumNotes = [
       { name: "Kick", type: "kick" },
@@ -236,6 +245,17 @@
     let isPlaying = false;
     let currentStep = 0;
     let nextNoteTime = 0;
+
+    // ドラム自動コピーの設定保存
+    document.getElementById('autoCopyDrums').addEventListener('change', () => {
+      localStorage.setItem('autoCopyDrums', document.getElementById('autoCopyDrums').checked);
+    });
+
+    // ドラム自動コピー設定の復元
+    const savedAutoCopy = localStorage.getItem('autoCopyDrums');
+    if (savedAutoCopy !== null) {
+      document.getElementById('autoCopyDrums').checked = savedAutoCopy === 'true';
+    }
 
     // デフォルト長さの更新
     document.getElementById('defaultDuration').addEventListener('change', () => {
@@ -275,18 +295,43 @@
         const data = JSON.parse(jsonString);
         if (
           data.sequence && Array.isArray(data.sequence) &&
-          data.sequence.length === notes.length &&
+          (data.sequence.length === 17 || data.sequence.length === notes.length) &&
           data.measures && typeof data.measures === 'number' &&
           data.defaultDuration && typeof data.defaultDuration === 'number'
         ) {
-          sequence = data.sequence.map(row => 
-            row.map(cell => ({
-              active: !!cell.active,
-              duration: Number(cell.duration) || defaultDuration,
-              connected: !!cell.connected,
-              rest: !!cell.rest
-            }))
+          let newSequence = Array(notes.length).fill().map(() => 
+            Array(data.measures * stepsPerMeasure).fill().map(() => ({ active: false, duration: data.defaultDuration, connected: false, rest: false }))
           );
+          if (data.sequence.length === 17) {
+            // 旧データ（C4～C5＋4ドラム）のマッピング
+            for (let row = 0; row < 13; row++) {
+              newSequence[row + 12] = data.sequence[row].map(cell => ({
+                active: !!cell.active,
+                duration: Number(cell.duration) || data.defaultDuration,
+                connected: !!cell.connected,
+                rest: !!cell.rest
+              }));
+            }
+            for (let row = 13; row < 17; row++) {
+              newSequence[row + 24] = data.sequence[row].map(cell => ({
+                active: !!cell.active,
+                duration: Number(cell.duration) || data.defaultDuration,
+                connected: !!cell.connected,
+                rest: !!cell.rest
+              }));
+            }
+          } else {
+            // 新データ（C3～C6＋4ドラム）
+            newSequence = data.sequence.map(row => 
+              row.map(cell => ({
+                active: !!cell.active,
+                duration: Number(cell.duration) || data.defaultDuration,
+                connected: !!cell.connected,
+                rest: !!cell.rest
+              }))
+            );
+          }
+          sequence = newSequence;
           measures = data.measures;
           defaultDuration = data.defaultDuration;
           document.getElementById('defaultDuration').value = defaultDuration;
@@ -320,11 +365,41 @@
         const parsed = JSON.parse(data);
         if (
           parsed.sequence && Array.isArray(parsed.sequence) &&
-          parsed.sequence.length === notes.length &&
+          (parsed.sequence.length === 17 || parsed.sequence.length === notes.length) &&
           parsed.measures && typeof parsed.measures === 'number' &&
           parsed.defaultDuration && typeof parsed.defaultDuration === 'number'
         ) {
-          sequence = parsed.sequence;
+          let newSequence = Array(notes.length).fill().map(() => 
+            Array(parsed.measures * stepsPerMeasure).fill().map(() => ({ active: false, duration: parsed.defaultDuration, connected: false, rest: false }))
+          );
+          if (parsed.sequence.length === 17) {
+            for (let row = 0; row < 13; row++) {
+              newSequence[row + 12] = parsed.sequence[row].map(cell => ({
+                active: !!cell.active,
+                duration: Number(cell.duration) || parsed.defaultDuration,
+                connected: !!cell.connected,
+                rest: !!cell.rest
+              }));
+            }
+            for (let row = 13; row < 17; row++) {
+              newSequence[row + 24] = parsed.sequence[row].map(cell => ({
+                active: !!cell.active,
+                duration: Number(cell.duration) || parsed.defaultDuration,
+                connected: !!cell.connected,
+                rest: !!cell.rest
+              }));
+            }
+          } else {
+            newSequence = parsed.sequence.map(row => 
+              row.map(cell => ({
+                active: !!cell.active,
+                duration: Number(cell.duration) || parsed.defaultDuration,
+                connected: !!cell.connected,
+                rest: !!cell.rest
+              }))
+            );
+          }
+          sequence = newSequence;
           measures = parsed.measures;
           defaultDuration = parsed.defaultDuration;
           document.getElementById('defaultDuration').value = defaultDuration;
@@ -829,8 +904,18 @@
 
     // 小節の追加（32サブマス＝4小節）
     function addMeasure() {
+      const prevMeasureStart = (measures - 4) * stepsPerMeasure;
+      const newMeasureLength = 4 * stepsPerMeasure;
       measures += 4;
-      sequence = sequence.map(row => [...row, ...Array(4 * stepsPerMeasure).fill().map(() => ({ active: false, duration: defaultDuration, connected: false, rest: false }))]);
+      sequence = sequence.map((row, rowIndex) => {
+        const newRow = [...row, ...Array(newMeasureLength).fill().map(() => ({ active: false, duration: defaultDuration, connected: false, rest: false }))];
+        if (rowIndex >= melodyNotes.length && document.getElementById('autoCopyDrums').checked && prevMeasureStart >= 0) {
+          for (let i = 0; i < newMeasureLength; i++) {
+            newRow[prevMeasureStart + i + newMeasureLength] = { ...row[prevMeasureStart + i] };
+          }
+        }
+        return newRow;
+      });
       renderSequencer();
     }
 
