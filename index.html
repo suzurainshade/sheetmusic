@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>作曲ツール</title>
+  <title>作曲ツールv2</title>
   <style>
     body {
       font-family: Arial, sans-serif;
@@ -57,13 +57,13 @@
       background-color: #81c784;
     }
     .note.step-boundary {
-      border-right: 1px solid #999; /* 1ステップ（2サブマス） */
+      border-right: 1px solid #999;
     }
     .note.measure-boundary {
-      border-right: 2px solid #666; /* 4マス（8サブマス） */
+      border-right: 2px solid #666;
     }
     .note.section-boundary {
-      border-right: 3px solid #000; /* 16マス（32サブマス） */
+      border-right: 3px solid #000;
     }
     .row-label {
       width: 80px;
@@ -108,11 +108,35 @@
       width: 60px;
       margin: 5px;
     }
+    .modal {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background-color: rgba(0,0,0,0.5);
+      z-index: 1000;
+      justify-content: center;
+      align-items: center;
+    }
+    .modal-content {
+      background-color: white;
+      padding: 20px;
+      border-radius: 5px;
+      width: 80%;
+      max-width: 600px;
+    }
+    .modal-content textarea {
+      width: 100%;
+      height: 100px;
+      margin: 10px 0;
+    }
   </style>
 </head>
 <body>
-  <h1>作曲ツール</h1>
-  <p>グリッドをクリックで音を配置、右クリックで長さや休符を設定。1マス＝16分音符。</p>
+  <h1>改良版作曲ツール</h1>
+  <p>グリッドをクリックで音を配置、右クリックで長さや休符を設定。1マス=16分音符。セーブコードで共有可能。</p>
   <div class="controls">
     <button onclick="playSequence()">再生</button>
     <button onclick="stopSequence()">停止</button>
@@ -120,15 +144,17 @@
     <button onclick="removeMeasure()">小節削除</button>
     <button onclick="saveSequence()">保存</button>
     <button onclick="loadSequence()">読み込み</button>
+    <button onclick="showSaveCodeModal()">セーブコード出力</button>
+    <button onclick="showLoadCodeModal()">セーブコード読み込み</button>
     <button onclick="exportWav()">WAVエクスポート</button>
     <label>テンポ (BPM): <input type="number" id="tempo" value="120" min="30" max="300"></label>
-    <label>デフォルト長さ: <input type="number" id="defaultDuration" value="4" min="0.5" max="2000" step="0.5"></label>
+    <label>デフォルト長さ (0.5ステップ単位): <input type="number" id="defaultDuration" value="4" min="0.5" max="2000" step="0.5"></label>
     <label>楽器: 
       <select id="instrument">
-        <option value="sine">Sine</option>
-        <option value="square">Square</option>
-        <option value="sawtooth">Sawtooth</option>
-        <option value="triangle">Triangle</option>
+        <option value="sine">ピアノ (Sine)</option>
+        <option value="square">バイオリン (Square)</option>
+        <option value="sawtooth">ギター (Sawtooth)</option>
+        <option value="triangle">フルート (Triangle)</option>
         <option value="trumpet">トランペット</option>
         <option value="bass">ベース</option>
         <option value="kick">バスドラム</option>
@@ -143,6 +169,22 @@
     </label>
   </div>
   <div class="sequencer" id="sequencer"></div>
+  <div class="modal" id="saveCodeModal">
+    <div class="modal-content">
+      <h2>セーブコード出力</h2>
+      <textarea id="saveCodeOutput" readonly></textarea>
+      <button onclick="copySaveCode()">コードをコピー</button>
+      <button onclick="closeModal('saveCodeModal')">閉じる</button>
+    </div>
+  </div>
+  <div class="modal" id="loadCodeModal">
+    <div class="modal-content">
+      <h2>セーブコード読み込み</h2>
+      <textarea id="loadCodeInput" placeholder="セーブコードを貼り付けてください"></textarea>
+      <button onclick="loadFromCode()">読み込み</button>
+      <button onclick="closeModal('loadCodeModal')">閉じる</button>
+    </div>
+  </div>
 
   <script>
     const AudioContext = window.AudioContext || window.webkitAudioContext;
@@ -185,9 +227,9 @@
       piccolo: { name: "Piccolo", type: "melody", wave: "triangle", filter: { type: "lowpass", freq: 2000 } },
       sax: { name: "Sax", type: "melody", wave: "sawtooth", filter: { type: "lowpass", freq: 800 } }
     };
-    let measures = 4; // 初期4小節（32サブマス）
-    const stepsPerMeasure = 8; // 1小節＝8サブマス（4ステップ）
-    let defaultDuration = 4; // デフォルト4サブマス（2ステップ＝2分音符）
+    let measures = 4;
+    const stepsPerMeasure = 8;
+    let defaultDuration = 4;
     let sequence = Array(notes.length).fill().map(() => 
       Array(measures * stepsPerMeasure).fill().map(() => ({ active: false, duration: defaultDuration, connected: false, rest: false }))
     );
@@ -206,24 +248,91 @@
       }
     });
 
-    // シーケンスの保存
+    // セーブコード出力
+    function showSaveCodeModal() {
+      const data = { sequence, measures, defaultDuration };
+      const jsonString = JSON.stringify(data);
+      const saveCode = btoa(jsonString);
+      const textarea = document.getElementById('saveCodeOutput');
+      textarea.value = saveCode;
+      document.getElementById('saveCodeModal').style.display = 'flex';
+    }
+
+    // セーブコードコピー
+    function copySaveCode() {
+      const textarea = document.getElementById('saveCodeOutput');
+      textarea.select();
+      document.execCommand('copy');
+      alert('セーブコードをコピーしました！');
+    }
+
+    // セーブコード読み込み
+    function loadFromCode() {
+      const textarea = document.getElementById('loadCodeInput');
+      const saveCode = textarea.value.trim();
+      try {
+        const jsonString = atob(saveCode);
+        const data = JSON.parse(jsonString);
+        if (
+          data.sequence && Array.isArray(data.sequence) &&
+          data.sequence.length === notes.length &&
+          data.measures && typeof data.measures === 'number' &&
+          data.defaultDuration && typeof data.defaultDuration === 'number'
+        ) {
+          sequence = data.sequence.map(row => 
+            row.map(cell => ({
+              active: !!cell.active,
+              duration: Number(cell.duration) || defaultDuration,
+              connected: !!cell.connected,
+              rest: !!cell.rest
+            }))
+          );
+          measures = data.measures;
+          defaultDuration = data.defaultDuration;
+          document.getElementById('defaultDuration').value = defaultDuration;
+          renderSequencer();
+          closeModal('loadCodeModal');
+          alert('セーブコードを読み込みました！');
+        } else {
+          alert('無効なセーブコードです。データ形式を確認してください。');
+        }
+      } catch (e) {
+        alert('セーブコードの読み込みに失敗しました。コードが正しいか確認してください。');
+      }
+    }
+
+    // モーダル閉じる
+    function closeModal(modalId) {
+      document.getElementById(modalId).style.display = 'none';
+    }
+
+    // シーケンスの保存（ローカルストレージ）
     function saveSequence() {
       const data = { sequence, measures, defaultDuration };
       localStorage.setItem('musicComposerSequence', JSON.stringify(data));
-      alert('シーケンスを保存しました！');
+      alert('シーケンスをローカルに保存しました！');
     }
 
-    // シーケンスの読み込み
+    // シーケンスの読み込み（ローカルストレージ）
     function loadSequence() {
       const data = localStorage.getItem('musicComposerSequence');
       if (data) {
         const parsed = JSON.parse(data);
-        sequence = parsed.sequence;
-        measures = parsed.measures;
-        defaultDuration = parsed.defaultDuration || 4;
-        document.getElementById('defaultDuration').value = defaultDuration;
-        renderSequencer();
-        alert('シーケンスを読み込みました！');
+        if (
+          parsed.sequence && Array.isArray(parsed.sequence) &&
+          parsed.sequence.length === notes.length &&
+          parsed.measures && typeof parsed.measures === 'number' &&
+          parsed.defaultDuration && typeof parsed.defaultDuration === 'number'
+        ) {
+          sequence = parsed.sequence;
+          measures = parsed.measures;
+          defaultDuration = parsed.defaultDuration;
+          document.getElementById('defaultDuration').value = defaultDuration;
+          renderSequencer();
+          alert('ローカルからシーケンスを読み込みました！');
+        } else {
+          alert('保存されたシーケンスの形式が無効です。');
+        }
       } else {
         alert('保存されたシーケンスがありません。');
       }
@@ -232,7 +341,7 @@
     // WAVエクスポート
     async function exportWav() {
       const tempo = parseInt(document.getElementById('tempo').value) || 120;
-      const stepDuration = 60 / tempo / 8; // 0.5ステップ＝8分音符
+      const stepDuration = 60 / tempo / 8;
       const totalDuration = measures * stepsPerMeasure * stepDuration;
       const offlineCtx = new OfflineAudioContext(2, Math.ceil(totalDuration * ctx.sampleRate), ctx.sampleRate);
 
@@ -408,7 +517,7 @@
     // 音の長さ更新
     function updateDuration(row, col, duration, isRest) {
       if (notes[row].type || instrumentTypes[document.getElementById('instrument').value].type === "drum") {
-        duration = Math.min(duration, 8); // ドラムは最大4ステップ（8サブマス）
+        duration = Math.min(duration, 8);
       }
       for (let i = 1; i < measures * stepsPerMeasure - col; i++) {
         if (sequence[row][col + i].connected) {
@@ -561,7 +670,6 @@
         oscillator.type = instrument.wave || "sine";
         oscillator.frequency.setValueAtTime(note.freq, startTime);
         
-        // ビブラート
         if (instrument.vibrato) {
           const vibrato = ctx.createOscillator();
           const vibratoGain = ctx.createGain();
@@ -573,7 +681,6 @@
           vibrato.stop(startTime + duration + 0.05);
         }
 
-        // フィルター
         let filter;
         if (instrument.filter) {
           filter = ctx.createBiquadFilter();
@@ -585,7 +692,6 @@
           oscillator.connect(gainNode);
         }
 
-        // エンベロープ
         if (instrument.envelope) {
           const { attack, decay, sustain, release } = instrument.envelope;
           gainNode.gain.setValueAtTime(0, startTime);
@@ -679,7 +785,7 @@
     // 次のステップをスケジュール
     function scheduleNotes() {
       const tempo = parseInt(document.getElementById('tempo').value) || 120;
-      const stepDuration = 60 / tempo / 8; // 0.5ステップ＝8分音符
+      const stepDuration = 60 / tempo / 8;
       const instrument = document.getElementById('instrument').value;
 
       while (nextNoteTime < ctx.currentTime + 0.15 && isPlaying) {
