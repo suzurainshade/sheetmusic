@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>作曲ツールv3（ドラム自動コピー＆オクターブ拡張）</title>
+  <title>作曲ツールv4（JSON入出力＆メニュー位置）</title>
   <style>
     body {
       font-family: Arial, sans-serif;
@@ -92,6 +92,33 @@
     input[type="checkbox"] {
       vertical-align: middle;
     }
+    input[type="file"] {
+      background-color: white;
+      color: black;
+      padding: 8px;
+    }
+    .context-menu {
+      position: absolute;
+      background-color: white;
+      border: 1px solid #ccc;
+      box-shadow: 2px 2px 5px rgba(0,0,0,0.2);
+      z-index: 1000;
+      padding: 5px;
+      width: 200px;
+      max-height: 300px;
+      overflow-y: auto;
+    }
+    .context-menu div {
+      padding: 8px;
+      cursor: pointer;
+    }
+    .context-menu div:hover {
+      background-color: #f0f0f0;
+    }
+    .context-menu input {
+      width: 60px;
+      margin: 5px;
+    }
     .modal {
       display: none;
       position: fixed;
@@ -119,8 +146,8 @@
   </style>
 </head>
 <body>
-  <h1>作曲ツールv3</h1>
-  <p>グリッドをクリックで音を配置、右クリックで長さや休符を設定。1マス=32分音符）。セーブコードで共有、ドラム自動コピー（新小節）可。</p>
+  <h1>作曲ツールv4</h1>
+  <p>グリッドをクリックで音を配置（即時再生）、右クリックで長さや休符を設定。1マス=32分音符。JSONで保存/読み込み、旧セーブコード読み込み可、ドラム自動コピー（新小節）可。</p>
   <div class="controls">
     <button onclick="playSequence()">再生</button>
     <button onclick="stopSequence()">停止</button>
@@ -128,8 +155,9 @@
     <button onclick="removeMeasure()">小節削除</button>
     <button onclick="saveSequence()">保存</button>
     <button onclick="loadSequence()">読み込み</button>
-    <button onclick="showSaveCodeModal()">セーブコード出力</button>
-    <button onclick="showLoadCodeModal()">セーブコード読み込み</button>
+    <button onclick="exportJson()">JSONエクスポート</button>
+    <button onclick="showJsonImportModal()">JSONインポート</button>
+    <button onclick="showLoadCodeModal()">旧セーブコード読み込み</button>
     <button onclick="exportWav()">WAVエクスポート</button>
     <label>テンポ (BPM): <input type="number" id="tempo" value="120" min="30" max="300"></label>
     <label>デフォルト長さ (0.5ステップ単位): <input type="number" id="defaultDuration" value="4" min="0.5" max="2000" step="0.5"></label>
@@ -154,20 +182,20 @@
     <label><input type="checkbox" id="autoCopyDrums" checked> ドラム自動コピー（新小節）</label>
   </div>
   <div class="sequencer" id="sequencer"></div>
-  <div class="modal" id="saveCodeModal">
-    <div class="modal-content">
-      <h2>セーブコード出力</h2>
-      <textarea id="saveCodeOutput" readonly></textarea>
-      <button onclick="copySaveCode()">コードをコピー</button>
-      <button onclick="closeModal('saveCodeModal')">閉じる</button>
-    </div>
-  </div>
   <div class="modal" id="loadCodeModal">
     <div class="modal-content">
-      <h2>セーブコード読み込み</h2>
-      <textarea id="loadCodeInput" placeholder="セーブコードを貼り付けてください"></textarea>
+      <h2>旧セーブコード読み込み</h2>
+      <textarea id="loadCodeInput" placeholder="旧セーブコード（Base64）を貼り付けてください"></textarea>
       <button onclick="loadFromCode()">読み込み</button>
       <button onclick="closeModal('loadCodeModal')">閉じる</button>
+    </div>
+  </div>
+  <div class="modal" id="fileInputModal">
+    <div class="modal-content">
+      <h2>JSONインポート</h2>
+      <input type="file" id="jsonFileInput" accept=".json">
+      <button onclick="loadFromJson()">読み込み</button>
+      <button onclick="closeModal('fileInputModal')">閉じる</button>
     </div>
   </div>
 
@@ -268,25 +296,96 @@
       }
     });
 
-    // セーブコード出力
-    function showSaveCodeModal() {
+    // JSONエクスポート
+    function exportJson() {
       const data = { sequence, measures, defaultDuration };
-      const jsonString = JSON.stringify(data);
-      const saveCode = btoa(jsonString);
-      const textarea = document.getElementById('saveCodeOutput');
-      textarea.value = saveCode;
-      document.getElementById('saveCodeModal').style.display = 'flex';
+      const jsonString = JSON.stringify(data, null, 2);
+      const blob = new Blob([jsonString], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'sequence.json';
+      a.click();
+      URL.revokeObjectURL(url);
     }
 
-    // セーブコードコピー
-    function copySaveCode() {
-      const textarea = document.getElementById('saveCodeOutput');
-      textarea.select();
-      document.execCommand('copy');
-      alert('セーブコードをコピーしました！');
+    // JSONインポートモーダル表示
+    function showJsonImportModal() {
+      document.getElementById('fileInputModal').style.display = 'flex';
     }
 
-    // セーブコード読み込み
+    // JSON読み込み
+    function loadFromJson() {
+      const input = document.getElementById('jsonFileInput');
+      const file = input.files[0];
+      if (!file) {
+        alert('JSONファイルを選択してください。');
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          const data = JSON.parse(e.target.result);
+          if (
+            data.sequence && Array.isArray(data.sequence) &&
+            (data.sequence.length === 17 || data.sequence.length === notes.length) &&
+            data.measures && typeof data.measures === 'number' &&
+            data.defaultDuration && typeof data.defaultDuration === 'number'
+          ) {
+            let newSequence = Array(notes.length).fill().map(() => 
+              Array(data.measures * stepsPerMeasure).fill().map(() => ({ active: false, duration: data.defaultDuration, connected: false, rest: false }))
+            );
+            if (data.sequence.length === 17) {
+              // 旧データ（C4～C5＋4ドラム）のマッピング
+              for (let row = 0; row < 13; row++) {
+                newSequence[row + 12] = data.sequence[row].map(cell => ({
+                  active: !!cell.active,
+                  duration: Number(cell.duration) || data.defaultDuration,
+                  connected: !!cell.connected,
+                  rest: !!cell.rest
+                }));
+              }
+              for (let row = 13; row < 17; row++) {
+                newSequence[row + 24] = data.sequence[row].map(cell => ({
+                  active: !!cell.active,
+                  duration: Number(cell.duration) || data.defaultDuration,
+                  connected: !!cell.connected,
+                  rest: !!cell.rest
+                }));
+              }
+            } else {
+              // 新データ（C3～C6＋4ドラム）
+              newSequence = data.sequence.map(row => 
+                row.map(cell => ({
+                  active: !!cell.active,
+                  duration: Number(cell.duration) || data.defaultDuration,
+                  connected: !!cell.connected,
+                  rest: !!cell.rest
+                }))
+              );
+            }
+            sequence = newSequence;
+            measures = data.measures;
+            defaultDuration = data.defaultDuration;
+            document.getElementById('defaultDuration').value = defaultDuration;
+            renderSequencer();
+            closeModal('fileInputModal');
+            alert('JSONを読み込みました！');
+          } else {
+            alert('無効なJSON形式です。データ構造を確認してください。');
+          }
+        } catch (e) {
+          alert('JSONファイルの読み込みに失敗しました。ファイルが正しいか確認してください。');
+        }
+      };
+      reader.readAsText(file);
+    }
+
+    // 旧セーブコード読み込み
+    function showLoadCodeModal() {
+      document.getElementById('loadCodeModal').style.display = 'flex';
+    }
+
     function loadFromCode() {
       const textarea = document.getElementById('loadCodeInput');
       const saveCode = textarea.value.trim();
@@ -303,7 +402,6 @@
             Array(data.measures * stepsPerMeasure).fill().map(() => ({ active: false, duration: data.defaultDuration, connected: false, rest: false }))
           );
           if (data.sequence.length === 17) {
-            // 旧データ（C4～C5＋4ドラム）のマッピング
             for (let row = 0; row < 13; row++) {
               newSequence[row + 12] = data.sequence[row].map(cell => ({
                 active: !!cell.active,
@@ -321,7 +419,6 @@
               }));
             }
           } else {
-            // 新データ（C3～C6＋4ドラム）
             newSequence = data.sequence.map(row => 
               row.map(cell => ({
                 active: !!cell.active,
@@ -337,7 +434,7 @@
           document.getElementById('defaultDuration').value = defaultDuration;
           renderSequencer();
           closeModal('loadCodeModal');
-          alert('セーブコードを読み込みました！');
+          alert('旧セーブコードを読み込みました！');
         } else {
           alert('無効なセーブコードです。データ形式を確認してください。');
         }
@@ -552,8 +649,14 @@
 
       const menu = document.createElement('div');
       menu.classList.add('context-menu');
-      menu.style.left = `${e.pageX}px`;
-      menu.style.top = `${e.pageY}px`;
+      const menuWidth = 200;
+      const menuHeight = 300;
+      let left = e.clientX;
+      let top = e.clientY;
+      if (left + menuWidth > window.innerWidth) left = window.innerWidth - menuWidth;
+      if (top + menuHeight > window.innerHeight) top = window.innerHeight - menuHeight;
+      menu.style.left = `${left}px`;
+      menu.style.top = `${top}px`;
       const durations = [0.5, 1, 2, 4, 8, 16, 32, 64];
       durations.forEach(dur => {
         const item = document.createElement('div');
